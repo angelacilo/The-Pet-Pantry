@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { Suspense, useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import RequireStaff from "@/components/RequireStaff";
 import { resizeImage } from "@/lib/resizeImage";
+import QuickColorChips, { QuickColor } from "@/components/QuickColorChips";
 
 interface Product {
   id: string | number;
@@ -36,7 +37,7 @@ interface ProductVariant {
   sort_order: number;
 }
 
-export default function ProductOptionsAndPhotosPage() {
+function ProductOptionsAndPhotosContent() {
   const params = useParams();
   const productId = params?.id as string;
 
@@ -632,6 +633,15 @@ export default function ProductOptionsAndPhotosPage() {
               + Add a New Color Option
             </h3>
 
+            <QuickColorChips
+              disabled={creatingOption}
+              onSelectColor={(c: QuickColor) => {
+                setOptionName(c.name);
+                setColorHex(c.hex);
+                setHasColorHex(true);
+              }}
+            />
+
             <form onSubmit={handleAddOption} className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
               {/* Option Name */}
               <div className="sm:col-span-2">
@@ -912,3 +922,21 @@ export default function ProductOptionsAndPhotosPage() {
     </RequireStaff>
   );
 }
+
+export default function ProductOptionsAndPhotosPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[50vh] flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-10 h-10 border-4 border-[#838F58] border-t-transparent rounded-full animate-spin mb-4" />
+          <p className="text-sm font-semibold text-[#4A5330]">
+            Loading options &amp; photos...
+          </p>
+        </div>
+      }
+    >
+      <ProductOptionsAndPhotosContent />
+    </Suspense>
+  );
+}
+

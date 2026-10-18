@@ -679,6 +679,9 @@ export default function CheckoutPage() {
                 <span>Total Due:</span>
                 <span>₱{finalTotalPreview.toFixed(2)}</span>
               </div>
+              <p className="text-[11px] text-[#4A5330]/80 font-medium pt-1">
+                Full payment by GCash or bank transfer is required to process your order.
+              </p>
             </div>
 
             <button

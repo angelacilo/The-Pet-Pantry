@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useMemo, useRef } from "react";
+import React, { Suspense, useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -36,7 +36,7 @@ interface ProductVariant {
   sort_order: number;
 }
 
-export default function ProductDetailPage() {
+function ProductDetailContent() {
   const params = useParams();
   const productId = params?.id as string;
 
@@ -543,7 +543,7 @@ export default function ProductDetailPage() {
           }`}
         >
           {hasOptions && selectedVariantId === null
-            ? "Choose Option"
+            ? "Choose a color"
             : isOutOfStock
             ? "Sold Out"
             : isAdded
@@ -554,3 +554,19 @@ export default function ProductDetailPage() {
     </div>
   );
 }
+
+export default function ProductDetailPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[55vh] flex flex-col items-center justify-center p-8">
+          <div className="w-10 h-10 border-4 border-[#838F58] border-t-transparent rounded-full animate-spin mb-4" />
+          <p className="text-sm font-semibold text-[#4A5330]">Loading product details...</p>
+        </div>
+      }
+    >
+      <ProductDetailContent />
+    </Suspense>
+  );
+}
+

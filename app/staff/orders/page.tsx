@@ -169,16 +169,12 @@ function StaffOrdersContent() {
 
       setOrders(fullOrders);
 
-      // Pre-populate amount input defaults
+      // Pre-populate amount input defaults with full order total
       const initialAmounts: Record<string, string> = {};
       fullOrders.forEach((o) => {
         const effTotal =
           Number(o.total) || Number(o.subtotal) + Number(o.delivery_fee || 0);
-        if (o.payment_option === "50_50") {
-          initialAmounts[o.id] = (effTotal / 2).toFixed(2);
-        } else {
-          initialAmounts[o.id] = effTotal.toFixed(2);
-        }
+        initialAmounts[o.id] = effTotal.toFixed(2);
       });
       setAmountInputs((prev) => ({ ...initialAmounts, ...prev }));
     } catch (err: unknown) {
@@ -388,7 +384,7 @@ function StaffOrdersContent() {
 
       if (error) throw new Error(error.message);
 
-      setSuccessMsg("Order marked completed and balance settled!");
+      setSuccessMsg("Order marked completed!");
       await fetchOrders(true);
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : "Failed to complete order");
@@ -730,28 +726,8 @@ function StaffOrdersContent() {
                     )}
                   </div>
 
-                  {/* Items List */}
-                  <div className="space-y-1">
-                    <span className="font-bold text-gray-500 uppercase tracking-wider block text-[10px]">
-                      Items ({order.order_items?.length || 0})
-                    </span>
-                    <div className="space-y-1 max-h-28 overflow-y-auto">
-                      {(order.order_items || []).map((item) => (
-                        <div key={item.id} className="flex justify-between text-gray-700">
-                          <span className="line-clamp-1">
-                            {item.qty}x {item.product_name}
-                            {item.variant_name ? ` (${item.variant_name})` : ""}
-                          </span>
-                          <span className="font-semibold shrink-0 ml-2">
-                            ₱{(Number(item.unit_price) * item.qty).toFixed(2)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Financials & Payment Option */}
-                  <div className="space-y-1.5 bg-[#F9D1D9]/20 p-3 rounded-xl">
+                  {/* Financials & Payment Option (Section 2: Payment) */}
+                  <div className="space-y-1.5 bg-[#F9D1D9]/20 p-3 rounded-xl border-r md:border-r border-gray-100">
                     <div className="flex justify-between">
                       <span className="text-gray-500">Subtotal:</span>
                       <span className="font-semibold">
@@ -787,17 +763,40 @@ function StaffOrdersContent() {
                         ₱{Number(order.amount_paid || 0).toFixed(2)}
                       </span>
                     </div>
-                    <div className="flex justify-between text-gray-600">
-                      <span>Balance:</span>
-                      <span className="font-bold text-amber-700">
-                        ₱{Number(order.balance_due || 0).toFixed(2)}
-                      </span>
-                    </div>
-                    {order.payment_option && (
-                      <div className="text-[11px] text-gray-500 pt-1 border-t border-gray-200">
-                        Plan: {order.payment_option === "50_50" ? "50/50 COD" : "Full Advance"} | Method: {order.payment_method?.toUpperCase()}
+                    {Number(order.balance_due || 0) > 0 && (
+                      <div className="flex justify-between text-gray-600">
+                        <span>Balance:</span>
+                        <span className="font-bold text-amber-700">
+                          ₱{Number(order.balance_due || 0).toFixed(2)}
+                        </span>
                       </div>
                     )}
+                    <div className="text-[11px] text-gray-500 pt-1 border-t border-gray-200">
+                      Payment: {order.payment_option === "50_50" ? "50% Advance + 50% COD" : "Full payment"}
+                      {order.payment_method && (
+                        <span> | {order.payment_method === "cash" ? "Cash" : order.payment_method === "gcash" ? "GCash" : "Bank"}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Items List (Section 3: Items) */}
+                  <div className="space-y-1">
+                    <span className="font-bold text-gray-500 uppercase tracking-wider block text-[10px]">
+                      Items ({order.order_items?.length || 0})
+                    </span>
+                    <div className="space-y-1 max-h-28 overflow-y-auto">
+                      {(order.order_items || []).map((item) => (
+                        <div key={item.id} className="flex justify-between text-gray-700">
+                          <span className="line-clamp-1">
+                            {item.qty}x {item.product_name}
+                            {item.variant_name ? ` (${item.variant_name})` : ""}
+                          </span>
+                          <span className="font-semibold shrink-0 ml-2">
+                            ₱{(Number(item.unit_price) * item.qty).toFixed(2)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
@@ -960,7 +959,7 @@ function StaffOrdersContent() {
                               : "bg-[#4A5330] text-white hover:bg-[#4A5330]/90"
                           }`}
                         >
-                          Mark Completed (Settle Full) ✓
+                          Complete
                         </button>
                         {isPaymentVerificationBlocked && (
                           <span className="text-[11px] text-amber-700 font-semibold">
