@@ -24,7 +24,7 @@ interface BestSeller {
 interface LowStockProduct {
   id: string | number;
   name: string;
-  category: string | null;
+  category_name?: string | null;
   price: number;
   stock_qty: number;
   is_active: boolean;
@@ -75,7 +75,7 @@ export default function StaffReportsPage() {
 
         let itemsQuery = supabase
           .from("order_items")
-          .select("product_id, product_name, unit_price, qty, order_id");
+          .select("product_id, product_name, variant_id, variant_name, unit_price, qty, order_id");
 
         if (completedOrderIds.length > 0) {
           itemsQuery = itemsQuery.in("order_id", completedOrderIds);
@@ -87,17 +87,20 @@ export default function StaffReportsPage() {
           console.warn("Could not query items for best sellers:", itemsErr.message);
         }
 
-        // Aggregate by product
+        // Aggregate by product and variant
         const productMap: Record<
           string,
           { name: string; qty: number; revenue: number }
         > = {};
 
-        (itemsData || []).forEach((item) => {
-          const key = String(item.product_id);
+        (itemsData || []).forEach((item: any) => {
+          const displayName = item.variant_name
+            ? `${item.product_name} (${item.variant_name})`
+            : item.product_name;
+          const key = `${item.product_id}_${item.variant_id ?? "base"}`;
           if (!productMap[key]) {
             productMap[key] = {
-              name: item.product_name,
+              name: displayName,
               qty: 0,
               revenue: 0,
             };
@@ -119,16 +122,45 @@ export default function StaffReportsPage() {
 
         setBestSellers(rankedBestSellers);
 
-        // 3. Fetch low-stock products (stock_qty <= 5)
+        // 3. Fetch low-stock products & variants (stock_qty <= 5)
         const { data: productsData, error: prodErr } = await supabase
           .from("products")
-          .select("id, name, category, price, stock_qty, is_active")
-          .lte("stock_qty", 5)
-          .order("stock_qty", { ascending: true });
+          .select("id, name, price, stock_qty, is_active, categories(name), product_variants(id, name, stock_qty, is_active)")
+          .eq("is_active", true);
 
         if (prodErr) throw new Error(prodErr.message);
 
-        setLowStockProducts((productsData as LowStockProduct[]) || []);
+        const lowList: LowStockProduct[] = [];
+        (productsData || []).forEach((p: any) => {
+          const catName = p.categories?.name || null;
+          const activeVars = (p.product_variants || []).filter((v: any) => v.is_active);
+          if (activeVars.length > 0) {
+            activeVars.forEach((v: any) => {
+              if (Number(v.stock_qty) <= 5) {
+                lowList.push({
+                  id: `${p.id}_var_${v.id}`,
+                  name: `${p.name} (${v.name})`,
+                  category_name: catName,
+                  price: p.price,
+                  stock_qty: Number(v.stock_qty),
+                  is_active: p.is_active,
+                });
+              }
+            });
+          } else if (Number(p.stock_qty) <= 5) {
+            lowList.push({
+              id: p.id,
+              name: p.name,
+              category_name: catName,
+              price: p.price,
+              stock_qty: Number(p.stock_qty),
+              is_active: p.is_active,
+            });
+          }
+        });
+
+        lowList.sort((a, b) => a.stock_qty - b.stock_qty);
+        setLowStockProducts(lowList);
       } catch (err: unknown) {
         setErrorMsg(err instanceof Error ? err.message : "Failed to load reports");
       } finally {
@@ -349,7 +381,7 @@ export default function StaffReportsPage() {
                               {p.name}
                             </span>
                             <span className="text-[10px] text-gray-400">
-                              {p.category || "General"}
+                              {p.category_name || "General"}
                             </span>
                           </td>
                           <td className="py-2.5 px-3 font-semibold text-gray-700">

@@ -18,7 +18,7 @@ export default function CartPage() {
           </p>
           <Link
             href="/"
-            className="inline-block px-6 py-3 rounded-xl bg-[#4A5330] hover:bg-[#4A5330]/90 text-white font-bold text-sm shadow-sm transition"
+            className="inline-block px-6 py-3 rounded-xl bg-[#4A5330] hover:bg-[#4A5330]/90 text-white font-bold text-sm shadow-sm transition min-h-[44px] leading-none flex items-center justify-center"
           >
             Explore Pet Products
           </Link>
@@ -28,7 +28,7 @@ export default function CartPage() {
   }
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-6 pb-28 sm:pb-12">
       {/* Header */}
       <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#838F58]/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -39,7 +39,7 @@ export default function CartPage() {
         </div>
         <button
           onClick={clear}
-          className="text-xs font-bold text-red-600 hover:text-red-700 hover:underline self-start sm:self-auto cursor-pointer"
+          className="text-xs font-bold text-red-600 hover:text-red-700 hover:underline self-start sm:self-auto cursor-pointer min-h-[44px] sm:min-h-0"
         >
           Clear Cart
         </button>
@@ -74,6 +74,11 @@ export default function CartPage() {
                     <h2 className="font-bold text-base text-[#4A5330] leading-snug">
                       {item.name}
                     </h2>
+                    {item.variant_name && (
+                      <p className="text-xs font-semibold text-[#838F58] mt-0.5">
+                        Color: {item.variant_name}
+                      </p>
+                    )}
                     <p className="text-xs text-gray-500 mt-0.5">
                       ₱{Number(item.price).toFixed(2)} each
                     </p>
@@ -89,7 +94,7 @@ export default function CartPage() {
                   <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden bg-gray-50">
                     <button
                       onClick={() => setQty(item.id, item.qty - 1)}
-                      className="px-3 py-1.5 text-sm font-bold text-[#4A5330] hover:bg-gray-200 transition cursor-pointer"
+                      className="min-w-[44px] min-h-[44px] text-sm font-bold text-[#4A5330] hover:bg-gray-200 transition cursor-pointer"
                       aria-label="Decrease quantity"
                     >
                       -
@@ -100,7 +105,7 @@ export default function CartPage() {
                     <button
                       onClick={() => setQty(item.id, item.qty + 1)}
                       disabled={isAtMax}
-                      className="px-3 py-1.5 text-sm font-bold text-[#4A5330] hover:bg-gray-200 transition disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                      className="min-w-[44px] min-h-[44px] text-sm font-bold text-[#4A5330] hover:bg-gray-200 transition disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
                       aria-label="Increase quantity"
                     >
                       +
@@ -117,7 +122,7 @@ export default function CartPage() {
                   {/* Remove Button */}
                   <button
                     onClick={() => removeItem(item.id)}
-                    className="text-gray-400 hover:text-red-500 p-1 cursor-pointer transition"
+                    className="text-gray-400 hover:text-red-500 p-2 cursor-pointer transition min-h-[44px] min-w-[44px] flex items-center justify-center"
                     title="Remove item"
                   >
                     🗑️
@@ -128,8 +133,8 @@ export default function CartPage() {
           })}
         </div>
 
-        {/* Order Summary Card */}
-        <div className="lg:col-span-1">
+        {/* Order Summary Card — hidden on mobile (replaced by sticky bar) */}
+        <div className="lg:col-span-1 hidden sm:block">
           <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#838F58]/20 sticky top-20 space-y-4">
             <h2 className="text-lg font-bold text-[#4A5330] border-b border-gray-100 pb-3">
               Order Summary
@@ -155,19 +160,33 @@ export default function CartPage() {
 
             <Link
               href="/checkout"
-              className="block w-full py-3.5 px-4 rounded-xl bg-[#4A5330] hover:bg-[#4A5330]/90 text-white font-bold text-sm text-center shadow-sm transition"
+              className="block w-full min-h-[44px] py-3.5 px-4 rounded-xl bg-[#4A5330] hover:bg-[#4A5330]/90 text-white font-bold text-sm text-center shadow-sm transition"
             >
               Proceed to Checkout →
             </Link>
 
             <Link
               href="/"
-              className="block w-full py-2.5 px-4 rounded-xl bg-gray-50 hover:bg-gray-100 text-[#4A5330] font-semibold text-xs text-center transition"
+              className="block w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-gray-50 hover:bg-gray-100 text-[#4A5330] font-semibold text-xs text-center transition"
             >
               ← Continue Shopping
             </Link>
           </div>
         </div>
+      </div>
+
+      {/* Sticky bottom bar — mobile only */}
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-[#838F58]/20 shadow-lg px-4 py-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs text-gray-500 font-semibold">Subtotal</p>
+          <p className="text-xl font-black text-[#FF5C93]">₱{subtotal.toFixed(2)}</p>
+        </div>
+        <Link
+          href="/checkout"
+          className="flex-1 max-w-[200px] min-h-[44px] py-3 px-4 rounded-xl bg-[#4A5330] hover:bg-[#4A5330]/90 text-white font-bold text-sm text-center shadow-sm transition flex items-center justify-center"
+        >
+          Checkout →
+        </Link>
       </div>
     </div>
   );

@@ -3,7 +3,10 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 
 export interface CartItem {
-  id: number | string;
+  id: string;
+  product_id: number | string;
+  variant_id: number | string | null;
+  variant_name: string | null;
   name: string;
   price: number;
   stock_qty: number;
@@ -11,8 +14,11 @@ export interface CartItem {
   qty: number;
 }
 
-interface CartProductInput {
-  id: number | string;
+export interface CartProductInput {
+  id?: number | string;
+  product_id?: number | string;
+  variant_id?: number | string | null;
+  variant_name?: string | null;
   name: string;
   price: number;
   stock_qty: number;
@@ -22,8 +28,8 @@ interface CartProductInput {
 interface CartContextType {
   items: CartItem[];
   add: (product: CartProductInput, qty?: number) => void;
-  setQty: (productId: number | string, qty: number) => void;
-  removeItem: (productId: number | string) => void;
+  setQty: (cartItemId: number | string, qty: number) => void;
+  removeItem: (cartItemId: number | string) => void;
   clear: () => void;
   subtotal: number;
   count: number;
@@ -37,12 +43,31 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load cart from localStorage on client mount
+  // Load cart from localStorage on client mount, normalizing structure
   useEffect(() => {
     try {
       const stored = localStorage.getItem(CART_STORAGE_KEY);
       if (stored) {
-        setItems(JSON.parse(stored));
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const normalized: CartItem[] = parsed.map((item) => {
+            const prodId = item.product_id ?? item.id;
+            const varId = item.variant_id ?? null;
+            const key = `${prodId}_${varId ?? "base"}`;
+            return {
+              id: key,
+              product_id: prodId,
+              variant_id: varId,
+              variant_name: item.variant_name ?? null,
+              name: item.name,
+              price: Number(item.price) || 0,
+              stock_qty: Number(item.stock_qty) || 0,
+              image_url: item.image_url || null,
+              qty: Number(item.qty) || 1,
+            };
+          });
+          setItems(normalized);
+        }
       }
     } catch (err) {
       console.error("Failed to load cart from localStorage", err);
@@ -63,20 +88,25 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   // Add product to cart (or increase qty if already present)
   const add = (product: CartProductInput, qty = 1) => {
+    const prodId = product.product_id ?? product.id!;
+    const varId = product.variant_id ?? null;
+    const itemKey = `${prodId}_${varId ?? "base"}`;
+
     setItems((prev) => {
-      const existing = prev.find((item) => String(item.id) === String(product.id));
+      const existing = prev.find((item) => item.id === itemKey);
       if (existing) {
         const nextQty = Math.min(existing.qty + qty, product.stock_qty || 9999);
         return prev.map((item) =>
-          String(item.id) === String(product.id)
-            ? { ...item, qty: nextQty }
-            : item
+          item.id === itemKey ? { ...item, qty: nextQty } : item
         );
       }
       return [
         ...prev,
         {
-          id: product.id,
+          id: itemKey,
+          product_id: prodId,
+          variant_id: varId,
+          variant_name: product.variant_name || null,
           name: product.name,
           price: product.price,
           stock_qty: product.stock_qty,
@@ -88,14 +118,14 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Set specific quantity for an item (removes if <= 0)
-  const setQty = (productId: number | string, qty: number) => {
+  const setQty = (cartItemId: number | string, qty: number) => {
     if (qty <= 0) {
-      removeItem(productId);
+      removeItem(cartItemId);
       return;
     }
     setItems((prev) =>
       prev.map((item) => {
-        if (String(item.id) === String(productId)) {
+        if (String(item.id) === String(cartItemId)) {
           const clamped = Math.min(qty, item.stock_qty || 9999);
           return { ...item, qty: clamped };
         }
@@ -105,8 +135,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Remove an item entirely
-  const removeItem = (productId: number | string) => {
-    setItems((prev) => prev.filter((item) => String(item.id) !== String(productId)));
+  const removeItem = (cartItemId: number | string) => {
+    setItems((prev) => prev.filter((item) => String(item.id) !== String(cartItemId)));
   };
 
   // Clear all items in cart

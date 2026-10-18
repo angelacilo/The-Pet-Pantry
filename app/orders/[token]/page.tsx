@@ -1,17 +1,20 @@
 "use client";
 
-import React, { Suspense, useEffect, useState, useMemo, useCallback } from "react";
+import React, { Suspense, useEffect, useState, useMemo, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { getStatusLabel, getStatusBadgeClass } from "@/lib/status";
+import { getStatusLabel, getStatusBadgeClass, getPaymentStatusLabel, getPaymentStatusBadgeClass } from "@/lib/status";
 import { addOrderToken } from "@/lib/myOrders";
 import { GCASH, BANK } from "@/lib/paymentConfig";
+import { resizeImage } from "@/lib/resizeImage";
 
 interface OrderItem {
   id: string | number;
   product_id: string | number;
   product_name: string;
+  variant_id?: string | number | null;
+  variant_name?: string | null;
   unit_price: number;
   qty: number;
 }
@@ -19,6 +22,8 @@ interface OrderItem {
 interface OrderData {
   id: number;
   status: string;
+  payment_status: string | null;
+  payment_reference: string | null;
   full_name: string;
   contact_number: string;
   delivery_option: "maxim" | "pickup";
@@ -26,6 +31,9 @@ interface OrderData {
   pickup_schedule: string | null;
   subtotal: number;
   delivery_fee: number | null;
+  delivery_lat?: number | null;
+  delivery_lng?: number | null;
+  delivery_distance_km?: number | null;
   total: number;
   amount_paid: number;
   balance_due: number;
@@ -36,6 +44,30 @@ interface OrderData {
   order_items?: OrderItem[];
 }
 
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+function downloadFile(url: string, filename: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function copyText(text: string) {
+  navigator.clipboard.writeText(text).catch(() => {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  });
+}
+
+// ─── main component ──────────────────────────────────────────────────────────
+
 function GuestOrderDetailContent() {
   const params = useParams();
   const token = params?.token as string;
@@ -45,14 +77,18 @@ function GuestOrderDetailContent() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedNumber, setCopiedNumber] = useState(false);
+  const [copiedAmount, setCopiedAmount] = useState(false);
 
   // Payment form states
   const [paymentOption, setPaymentOption] = useState<"50_50" | "full">("50_50");
   const [paymentMethod, setPaymentMethod] = useState<"gcash" | "bank" | "cash">("gcash");
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+  const [paymentReference, setPaymentReference] = useState("");
   const [submittingPayment, setSubmittingPayment] = useState(false);
   const [bankQrError, setBankQrError] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchOrderData = useCallback(async (isSilent = false) => {
     if (!token) return;
@@ -60,7 +96,6 @@ function GuestOrderDetailContent() {
     setErrorMsg(null);
 
     try {
-      // Call get_order RPC with the guest token
       const { data, error } = await supabase.rpc("get_order", {
         p_token: token,
       });
@@ -73,7 +108,6 @@ function GuestOrderDetailContent() {
         setOrder(null);
       } else {
         setOrder(data as OrderData);
-        // Ensure token is stored in localStorage recent orders list
         addOrderToken(token);
       }
     } catch (err: unknown) {
@@ -94,7 +128,6 @@ function GuestOrderDetailContent() {
     const timer = setInterval(() => {
       fetchOrderData(true);
     }, 30000);
-
     return () => clearInterval(timer);
   }, [fetchOrderData]);
 
@@ -127,8 +160,20 @@ function GuestOrderDetailContent() {
     }
   };
 
-  // Handle file input change with preview and strict validation
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCopyNumber = (num: string) => {
+    copyText(num);
+    setCopiedNumber(true);
+    setTimeout(() => setCopiedNumber(false), 2000);
+  };
+
+  const handleCopyAmount = () => {
+    copyText(amountToPayNow.toFixed(2));
+    setCopiedAmount(true);
+    setTimeout(() => setCopiedAmount(false), 2000);
+  };
+
+  // Handle file input change with preview, validation, and resize
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
     if (!file) {
       setReceiptFile(null);
@@ -154,7 +199,6 @@ function GuestOrderDetailContent() {
       return;
     }
 
-    // 5 MB limit (5 * 1024 * 1024 bytes)
     const MAX_SIZE = 5 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
       setErrorMsg("File is too large. Maximum receipt file size is 5 MB.");
@@ -166,9 +210,19 @@ function GuestOrderDetailContent() {
     }
 
     setErrorMsg(null);
-    setReceiptFile(file);
-    if (receiptPreview) URL.revokeObjectURL(receiptPreview);
-    setReceiptPreview(URL.createObjectURL(file));
+
+    // Resize/compress
+    try {
+      const resized = await resizeImage(file);
+      setReceiptFile(resized);
+      if (receiptPreview) URL.revokeObjectURL(receiptPreview);
+      setReceiptPreview(URL.createObjectURL(resized));
+    } catch {
+      // If resize fails, use original
+      setReceiptFile(file);
+      if (receiptPreview) URL.revokeObjectURL(receiptPreview);
+      setReceiptPreview(URL.createObjectURL(file));
+    }
   };
 
   // Submit payment form handler
@@ -178,6 +232,12 @@ function GuestOrderDetailContent() {
 
     setErrorMsg(null);
     setSuccessMsg(null);
+
+    // Validate reference for gcash/bank
+    if (paymentMethod !== "cash" && !paymentReference.trim()) {
+      setErrorMsg("Please enter your payment reference number.");
+      return;
+    }
 
     let receiptPath: string | null = null;
 
@@ -192,7 +252,6 @@ function GuestOrderDetailContent() {
       try {
         const cleanedFileName = receiptFile.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
         const timestamp = Date.now();
-        // Upload path MUST be: {token}/{timestamp}-{cleaned file name}
         const storagePath = `${token}/${timestamp}-${cleanedFileName}`;
 
         const { error: uploadErr } = await supabase.storage
@@ -214,27 +273,29 @@ function GuestOrderDetailContent() {
     }
 
     try {
-      // Call database function submit_payment(p_token, p_option, p_method, p_receipt_path)
       const { error: rpcErr } = await supabase.rpc("submit_payment", {
         p_token: token,
         p_option: paymentOption,
         p_method: paymentMethod,
         p_receipt_path: receiptPath,
+        p_reference: paymentMethod !== "cash" ? paymentReference.trim() : null,
       });
 
       if (rpcErr) {
         throw new Error(rpcErr.message);
       }
 
-      setSuccessMsg("Payment submitted! Your order status is now Payment under review.");
+      setSuccessMsg(null);
       setReceiptFile(null);
+      setPaymentReference("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
       if (receiptPreview) {
         URL.revokeObjectURL(receiptPreview);
         setReceiptPreview(null);
       }
 
-      // Refresh order data
-      await fetchOrderData(true);
+      // Refresh order data to get updated payment_status
+      await fetchOrderData(false);
     } catch (err: unknown) {
       console.error("submit_payment error:", err);
       setErrorMsg(err instanceof Error ? err.message : "Failed to submit payment");
@@ -254,7 +315,6 @@ function GuestOrderDetailContent() {
     );
   }
 
-  // Friendly "Order not found" message when get_order returns null
   if (!order) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center p-6">
@@ -288,9 +348,47 @@ function GuestOrderDetailContent() {
     Number(order.subtotal) + Number(order.delivery_fee || 0);
 
   const items = order.order_items || [];
+  const paymentStatus = order.payment_status;
+  const isAwaitingPayment = order.status === "awaiting_payment";
+  const isConfirmed = order.status === "confirmed";
+
+  // ── Payment confirmation card (shown after submit instead of generic success) ──
+  const PaymentConfirmationCard = () => {
+    if (!isConfirmed && !["pending", "cash", "verified", "rejected"].includes(paymentStatus || "")) return null;
+
+    let icon = "✅";
+    let title = "Order received! Your items are reserved.";
+    let subtitle = "";
+
+    if (paymentStatus === "pending") {
+      subtitle = "We are verifying your payment.";
+    } else if (paymentStatus === "cash") {
+      subtitle = "Please pay in cash when you pick up or receive your order.";
+    } else if (paymentStatus === "verified") {
+      icon = "✅";
+      subtitle = "Payment verified.";
+    } else if (paymentStatus === "rejected") {
+      icon = "⚠️";
+      title = "We could not verify your payment. Please contact the shop.";
+    }
+
+    return (
+      <div className={`p-4 rounded-xl border text-sm flex items-start gap-3 ${
+        paymentStatus === "rejected"
+          ? "bg-red-50 border-red-200 text-red-800"
+          : "bg-green-50 border-green-200 text-green-800"
+      }`}>
+        <span className="text-xl shrink-0">{icon}</span>
+        <div>
+          <p className="font-bold">{title}</p>
+          {subtitle && <p className="mt-0.5 text-sm">{subtitle}</p>}
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div className="space-y-6 pb-16 max-w-4xl mx-auto">
+    <div className="space-y-6 pb-20 max-w-4xl mx-auto">
       {/* Save / Bookmark Note Banner */}
       <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-xs border border-[#838F58]/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -307,7 +405,7 @@ function GuestOrderDetailContent() {
 
         <button
           onClick={handleCopyLink}
-          className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-[#838F58]/20 hover:bg-[#838F58]/30 text-[#4A5330] transition border border-[#838F58]/30 flex items-center gap-1.5 shrink-0 cursor-pointer"
+          className="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold bg-[#838F58]/20 hover:bg-[#838F58]/30 text-[#4A5330] transition border border-[#838F58]/30 flex items-center gap-1.5 shrink-0 cursor-pointer"
         >
           <span>{copiedLink ? "✓ Link Copied!" : "📋 Copy Order Link"}</span>
         </button>
@@ -330,14 +428,19 @@ function GuestOrderDetailContent() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span
-              className={`text-xs font-bold px-3 py-1.5 rounded-full ${getStatusBadgeClass(
-                order.status
-              )}`}
+              className={`text-xs font-bold px-3 py-1.5 rounded-full ${getStatusBadgeClass(order.status)}`}
             >
               {getStatusLabel(order.status)}
             </span>
+            {paymentStatus && paymentStatus !== "unpaid" && (
+              <span
+                className={`text-xs font-bold px-3 py-1.5 rounded-full ${getPaymentStatusBadgeClass(paymentStatus)}`}
+              >
+                {getPaymentStatusLabel(paymentStatus)}
+              </span>
+            )}
           </div>
         </div>
 
@@ -349,7 +452,7 @@ function GuestOrderDetailContent() {
               <div>
                 <p className="font-bold">Awaiting Delivery Fee Assessment</p>
                 <p className="text-xs text-[#4A5330]/80 mt-0.5">
-                  Our staff is verifying your address to calculate the Maxim delivery fee. Once updated, you can proceed with your payment here.
+                  Our staff will confirm your delivery fee shortly.
                 </p>
               </div>
             </div>
@@ -361,25 +464,61 @@ function GuestOrderDetailContent() {
               <div>
                 <p className="font-bold">Payment Needed to Confirm Order</p>
                 <p className="text-xs text-[#4A5330]/80 mt-0.5">
-                  Please review the final total below and submit your payment option and receipt. Orders are confirmed only after the required advance payment is received and verified!
+                  Please review the final total below and submit your payment option and receipt. Your items will be reserved as soon as you submit!
                 </p>
               </div>
             </div>
           )}
 
-          {order.status === "payment_submitted" && (
+          {order.status === "confirmed" && paymentStatus === "pending" && (
             <div className="flex items-start gap-2">
               <span className="text-lg">📑</span>
               <div>
-                <p className="font-bold">Payment Under Review</p>
+                <p className="font-bold">Order Received — Verifying Payment</p>
                 <p className="text-xs text-[#4A5330]/80 mt-0.5">
-                  Thank you! We have received your payment submission. Our staff is verifying your receipt. Your order status will update once confirmed.
+                  Your items are reserved. Our staff is verifying your payment receipt.
                 </p>
               </div>
             </div>
           )}
 
-          {order.status === "confirmed" && (
+          {order.status === "confirmed" && paymentStatus === "cash" && (
+            <div className="flex items-start gap-2">
+              <span className="text-lg">💵</span>
+              <div>
+                <p className="font-bold">Order Received!</p>
+                <p className="text-xs text-[#4A5330]/80 mt-0.5">
+                  Your items are reserved. Please pay in cash when you pick up or receive your order.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {order.status === "confirmed" && paymentStatus === "verified" && (
+            <div className="flex items-start gap-2">
+              <span className="text-lg">✅</span>
+              <div>
+                <p className="font-bold">Order Confirmed &amp; Payment Verified!</p>
+                <p className="text-xs text-[#4A5330]/80 mt-0.5">
+                  Our team is now packing your pet supplies with care.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {order.status === "confirmed" && paymentStatus === "rejected" && (
+            <div className="flex items-start gap-2 text-red-700">
+              <span className="text-lg">⚠️</span>
+              <div>
+                <p className="font-bold">Payment Could Not Be Verified</p>
+                <p className="text-xs text-red-600 mt-0.5">
+                  We could not verify your payment. Please contact the shop.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {order.status === "confirmed" && !paymentStatus && (
             <div className="flex items-start gap-2">
               <span className="text-lg">✅</span>
               <div>
@@ -441,6 +580,11 @@ function GuestOrderDetailContent() {
         </div>
       </div>
 
+      {/* Payment confirmation card (after submit) */}
+      {(isConfirmed || ["pending", "cash", "verified", "rejected"].includes(paymentStatus || "")) && (
+        <PaymentConfirmationCard />
+      )}
+
       {/* Success / Error Messages */}
       {successMsg && (
         <div className="p-4 rounded-xl bg-green-50 border border-green-200 text-green-800 text-sm">
@@ -472,6 +616,7 @@ function GuestOrderDetailContent() {
                   <div>
                     <span className="font-bold text-[#4A5330]">
                       {item.product_name}
+                      {item.variant_name ? ` (${item.variant_name})` : ""}
                     </span>
                     <div className="text-xs text-gray-400">
                       ₱{Number(item.unit_price).toFixed(2)} × {item.qty}
@@ -499,7 +644,11 @@ function GuestOrderDetailContent() {
                   {order.delivery_option === "pickup"
                     ? "₱0.00 (Store Pickup)"
                     : order.delivery_fee !== null
-                    ? `₱${Number(order.delivery_fee).toFixed(2)}`
+                    ? `₱${Number(order.delivery_fee).toFixed(2)}${
+                        order.delivery_distance_km !== null && order.delivery_distance_km !== undefined
+                          ? ` (${order.delivery_distance_km} km)`
+                          : ""
+                      }`
                     : "To be assessed"}
                 </span>
               </div>
@@ -532,7 +681,7 @@ function GuestOrderDetailContent() {
           {/* Delivery & Recipient Card */}
           <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#838F58]/20 space-y-3">
             <h2 className="text-base font-bold text-[#4A5330] flex items-center gap-2">
-              <span>📍</span> Recipient & Delivery Details
+              <span>📍</span> Recipient &amp; Delivery Details
             </h2>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs sm:text-sm">
@@ -577,7 +726,7 @@ function GuestOrderDetailContent() {
         {/* Right Column: Payment Section */}
         <div className="md:col-span-1 space-y-6">
           {/* Active Payment Form when awaiting_payment */}
-          {order.status === "awaiting_payment" && (
+          {isAwaitingPayment && (
             <div className="bg-white rounded-2xl p-6 shadow-xs border-2 border-[#838F58]/30 space-y-5">
               <div>
                 <h2 className="text-base font-bold text-[#4A5330] flex items-center gap-2">
@@ -663,48 +812,29 @@ function GuestOrderDetailContent() {
                   </span>
                 </div>
 
-                {/* 2. Payment Method Choice (Three Buttons) */}
+                {/* 2. Payment Method Choice */}
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-[#4A5330] mb-2">
                     2. Select Payment Method
                   </label>
                   <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod("gcash")}
-                      className={`py-2.5 px-1 rounded-xl text-xs font-bold transition border cursor-pointer flex flex-col items-center justify-center gap-1 ${
-                        paymentMethod === "gcash"
-                          ? "bg-[#4A5330] text-white border-[#4A5330] shadow-xs"
-                          : "bg-gray-50 text-[#4A5330] border-gray-200 hover:bg-gray-100"
-                      }`}
-                    >
-                      <span className="text-base">📱</span>
-                      <span>GCash</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod("bank")}
-                      className={`py-2.5 px-1 rounded-xl text-xs font-bold transition border cursor-pointer flex flex-col items-center justify-center gap-1 ${
-                        paymentMethod === "bank"
-                          ? "bg-[#4A5330] text-white border-[#4A5330] shadow-xs"
-                          : "bg-gray-50 text-[#4A5330] border-gray-200 hover:bg-gray-100"
-                      }`}
-                    >
-                      <span className="text-base">🏦</span>
-                      <span>Bank</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod("cash")}
-                      className={`py-2.5 px-1 rounded-xl text-xs font-bold transition border cursor-pointer flex flex-col items-center justify-center gap-1 ${
-                        paymentMethod === "cash"
-                          ? "bg-[#4A5330] text-white border-[#4A5330] shadow-xs"
-                          : "bg-gray-50 text-[#4A5330] border-gray-200 hover:bg-gray-100"
-                      }`}
-                    >
-                      <span className="text-base">💵</span>
-                      <span>Cash</span>
-                    </button>
+                    {(["gcash", "bank", "cash"] as const).map((method) => (
+                      <button
+                        key={method}
+                        type="button"
+                        onClick={() => { setPaymentMethod(method); setPaymentReference(""); }}
+                        className={`min-h-[44px] py-2.5 px-1 rounded-xl text-xs font-bold transition border cursor-pointer flex flex-col items-center justify-center gap-1 ${
+                          paymentMethod === method
+                            ? "bg-[#4A5330] text-white border-[#4A5330] shadow-xs"
+                            : "bg-gray-50 text-[#4A5330] border-gray-200 hover:bg-gray-100"
+                        }`}
+                      >
+                        <span className="text-base">
+                          {method === "gcash" ? "📱" : method === "bank" ? "🏦" : "💵"}
+                        </span>
+                        <span>{method === "gcash" ? "GCash" : method === "bank" ? "Bank" : "Cash"}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
 
@@ -723,6 +853,35 @@ function GuestOrderDetailContent() {
                         Scan to pay
                       </span>
                     </div>
+
+                    {/* Mobile-friendly actions */}
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => downloadFile(GCASH.qr, "gcash-qr.png")}
+                        className="min-h-[44px] flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <span>💾</span> Save QR image
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyNumber(GCASH.number)}
+                        className="min-h-[44px] flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-white border border-blue-200 text-blue-800 hover:bg-blue-50 transition cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        {copiedNumber ? "✓ Copied!" : "📋 Copy number"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCopyAmount}
+                        className="min-h-[44px] flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-white border border-blue-200 text-blue-800 hover:bg-blue-50 transition cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        {copiedAmount ? "✓ Copied!" : "💰 Copy amount"}
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] text-blue-900 bg-blue-100 rounded-lg px-3 py-2">
+                      📱 Open GCash, tap <strong>Scan QR</strong>, then <strong>Upload from gallery</strong>, or send to the number above.
+                    </p>
 
                     <div className="space-y-1.5 text-blue-900 pt-1">
                       <div className="flex justify-between">
@@ -746,7 +905,6 @@ function GuestOrderDetailContent() {
                 {/* Bank Transfer */}
                 {paymentMethod === "bank" && (
                   <div className="space-y-3 p-3.5 bg-indigo-50/70 rounded-xl border border-indigo-200 text-xs">
-                    {/* Bank QR Code (hidden if fails to load) */}
                     {!bankQrError && (
                       <div className="flex flex-col items-center justify-center p-3 bg-white rounded-xl border border-indigo-100 shadow-xs">
                         <img
@@ -760,6 +918,37 @@ function GuestOrderDetailContent() {
                         </span>
                       </div>
                     )}
+
+                    {/* Mobile-friendly actions */}
+                    <div className="flex flex-wrap gap-2">
+                      {!bankQrError && (
+                        <button
+                          type="button"
+                          onClick={() => downloadFile(BANK.qr, "bank-qr.png")}
+                          className="min-h-[44px] flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition cursor-pointer flex items-center justify-center gap-1"
+                        >
+                          <span>💾</span> Save QR image
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleCopyNumber(BANK.accountNumber)}
+                        className="min-h-[44px] flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-white border border-indigo-200 text-indigo-800 hover:bg-indigo-50 transition cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        {copiedNumber ? "✓ Copied!" : "📋 Copy number"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCopyAmount}
+                        className="min-h-[44px] flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-white border border-indigo-200 text-indigo-800 hover:bg-indigo-50 transition cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        {copiedAmount ? "✓ Copied!" : "💰 Copy amount"}
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] text-indigo-900 bg-indigo-100 rounded-lg px-3 py-2">
+                      📱 Open GCash, tap <strong>Scan QR</strong>, then <strong>Upload from gallery</strong>, or send to the account number above.
+                    </p>
 
                     <div className="space-y-1.5 text-indigo-900 pt-1">
                       <div className="flex justify-between">
@@ -792,7 +981,7 @@ function GuestOrderDetailContent() {
                       <span>Cash Payment</span>
                     </div>
                     <p className="text-[12px] leading-relaxed text-amber-950">
-                      Pay in cash when you pick up or receive your order. Your order is confirmed after our staff approve it. The remaining 50% in the COD option is also paid in cash on delivery or pickup.
+                      Pay in cash when you pick up or receive your order. Your items are reserved immediately. The remaining 50% in the COD option is also paid in cash on delivery or pickup.
                     </p>
                     <div className="flex justify-between pt-1.5 border-t border-amber-200 text-xs">
                       <span className="font-semibold">Amount to Pay:</span>
@@ -803,6 +992,26 @@ function GuestOrderDetailContent() {
                   </div>
                 )}
 
+                {/* Reference Number (GCash/Bank only) */}
+                {paymentMethod !== "cash" && (
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-[#4A5330]">
+                      Payment Reference Number *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={paymentReference}
+                      onChange={(e) => setPaymentReference(e.target.value)}
+                      placeholder="e.g. 1234567890"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 focus:border-[#4A5330] text-sm outline-none transition min-h-[44px]"
+                    />
+                    <p className="text-[11px] text-gray-400">
+                      Find it in your GCash or bank receipt.
+                    </p>
+                  </div>
+                )}
+
                 {/* Screenshot Upload with Live Preview (Required unless cash) */}
                 {paymentMethod !== "cash" && (
                   <div className="space-y-2">
@@ -810,6 +1019,7 @@ function GuestOrderDetailContent() {
                       Upload a screenshot of your payment *
                     </label>
                     <input
+                      ref={fileInputRef}
                       type="file"
                       required
                       accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
@@ -817,10 +1027,9 @@ function GuestOrderDetailContent() {
                       className="w-full text-xs text-gray-500 file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-[#F9D1D9] file:text-[#4A5330] hover:file:bg-[#F9D1D9]/80 cursor-pointer"
                     />
                     <p className="text-[11px] text-gray-400">
-                      Only JPG, PNG or WebP up to 5 MB accepted.
+                      Only JPG, PNG or WebP up to 5 MB accepted. Image will be compressed automatically.
                     </p>
 
-                    {/* Screenshot Live Preview */}
                     {receiptPreview && (
                       <div className="p-2.5 bg-gray-50 rounded-xl border border-gray-200 text-center">
                         <span className="text-[11px] font-bold text-gray-600 block mb-1.5">
@@ -836,15 +1045,15 @@ function GuestOrderDetailContent() {
                   </div>
                 )}
 
-                {/* Important Advance Payment Note */}
+                {/* Important Note */}
                 <div className="p-3 bg-[#F9D1D9]/40 rounded-xl border border-[#838F58]/20 text-[11px] text-[#4A5330] leading-snug">
-                  ⚠️ <strong>Note:</strong> Orders are confirmed only after the required advance payment is received and verified. Please double-check your order before paying.
+                  ✅ <strong>Your items are reserved immediately</strong> when you submit. Staff will verify the payment afterward.
                 </div>
 
                 <button
                   type="submit"
                   disabled={submittingPayment}
-                  className="w-full py-3.5 px-4 rounded-xl bg-[#4A5330] hover:bg-[#4A5330]/90 text-white font-bold text-xs shadow-sm transition disabled:opacity-50 cursor-pointer"
+                  className="w-full min-h-[44px] py-3.5 px-4 rounded-xl bg-[#4A5330] hover:bg-[#4A5330]/90 text-white font-bold text-xs shadow-sm transition disabled:opacity-50 cursor-pointer"
                 >
                   {submittingPayment ? "Submitting Payment..." : "Submit Payment →"}
                 </button>
@@ -853,7 +1062,7 @@ function GuestOrderDetailContent() {
           )}
 
           {/* Payment Info Card if already submitted or confirmed */}
-          {order.status !== "awaiting_payment" && (
+          {!isAwaitingPayment && (
             <div className="bg-white rounded-2xl p-6 shadow-xs border border-[#838F58]/20 space-y-3 text-xs">
               <h2 className="text-base font-bold text-[#4A5330] flex items-center gap-2">
                 <span>💳</span> Payment Status
@@ -877,6 +1086,24 @@ function GuestOrderDetailContent() {
                     {order.payment_method || "N/A"}
                   </span>
                 </div>
+
+                {paymentStatus && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Payment Status:</span>
+                    <span className={`font-bold text-xs px-2 py-0.5 rounded-full ${getPaymentStatusBadgeClass(paymentStatus)}`}>
+                      {getPaymentStatusLabel(paymentStatus)}
+                    </span>
+                  </div>
+                )}
+
+                {order.payment_reference && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Reference #:</span>
+                    <span className="font-bold font-mono text-[#4A5330]">
+                      {order.payment_reference}
+                    </span>
+                  </div>
+                )}
 
                 <div className="flex justify-between">
                   <span className="text-gray-400">Amount Paid:</span>

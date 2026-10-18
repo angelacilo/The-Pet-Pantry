@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { getStatusLabel, getStatusBadgeClass } from "@/lib/status";
+import { getStatusLabel, getStatusBadgeClass, getPaymentStatusLabel, getPaymentStatusBadgeClass } from "@/lib/status";
 import { getOrderTokens } from "@/lib/myOrders";
 
 interface OrderSummary {
@@ -12,12 +12,20 @@ interface OrderSummary {
   full_name: string;
   delivery_option: "maxim" | "pickup";
   status: string;
+  payment_status: string | null;
   subtotal: number;
   delivery_fee: number | null;
   total: number;
   amount_paid: number;
   balance_due: number;
   created_at: string;
+  order_items?: Array<{
+    id: number | string;
+    product_name: string;
+    variant_name?: string | null;
+    qty: number;
+    unit_price: number;
+  }>;
 }
 
 export default function MyOrdersPage() {
@@ -157,6 +165,13 @@ export default function MyOrdersPage() {
                     >
                       {getStatusLabel(order.status)}
                     </span>
+                    {order.payment_status && order.payment_status !== "unpaid" && (
+                      <span
+                        className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full ${getPaymentStatusBadgeClass(order.payment_status)}`}
+                      >
+                        {getPaymentStatusLabel(order.payment_status)}
+                      </span>
+                    )}
                     <span className="text-xs font-semibold text-gray-500">
                       {order.delivery_option === "maxim"
                         ? "🚚 Maxim Delivery"
@@ -167,6 +182,21 @@ export default function MyOrdersPage() {
                   <p className="text-xs text-gray-400">
                     Placed for <span className="font-semibold text-gray-600">{order.full_name}</span> on {formattedDate}
                   </p>
+
+                  {order.order_items && order.order_items.length > 0 && (
+                    <div className="text-xs text-[#4A5330]/80 pt-0.5 flex flex-wrap gap-x-2">
+                      {order.order_items.map((it, idx) => (
+                        <span key={idx}>
+                          <span className="font-bold text-[#4A5330]">{it.qty}x</span>{" "}
+                          <span>{it.product_name}</span>
+                          {it.variant_name && (
+                            <span className="text-[#838F58] font-semibold"> ({it.variant_name})</span>
+                          )}
+                          {idx < order.order_items!.length - 1 ? " •" : ""}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="flex items-center gap-4 text-xs pt-1">
                     <div>

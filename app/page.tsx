@@ -1,8 +1,31 @@
 "use client";
 
 import React, { useEffect, useState, useMemo } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { useCart } from "@/lib/cart";
+
+interface Category {
+  id: number | string;
+  name: string;
+  sort_order: number;
+}
+
+interface ProductImage {
+  id: number | string;
+  variant_id: number | string | null;
+  url: string;
+  sort_order: number;
+}
+
+interface ProductVariant {
+  id: number | string;
+  name: string;
+  color_hex: string | null;
+  stock_qty: number;
+  is_active: boolean;
+  sort_order: number;
+}
 
 export interface Product {
   id: string | number;
@@ -11,12 +34,16 @@ export interface Product {
   stock_qty: number;
   image_url: string | null;
   is_active: boolean;
-  category: string | null;
+  category_id?: number | null;
+  categoryName?: string | null;
   description: string | null;
+  product_images?: ProductImage[];
+  product_variants?: ProductVariant[];
 }
 
 export default function HomePage() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -26,20 +53,50 @@ export default function HomePage() {
   const { add, items } = useCart();
 
   useEffect(() => {
-    async function loadProducts() {
+    async function loadCatalog() {
       setLoading(true);
       setErrorMsg(null);
       try {
-        const { data, error } = await supabase
+        // 1. Load active categories from categories table
+        const { data: catData, error: catErr } = await supabase
+          .from("categories")
+          .select("id, name, sort_order")
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true })
+          .order("name", { ascending: true });
+
+        if (catErr) {
+          console.warn("Could not load categories:", catErr.message);
+        } else {
+          setCategories((catData as Category[]) || []);
+        }
+
+        // 2. Load active products with categories, images, and variants
+        const { data: prodData, error: prodErr } = await supabase
           .from("products")
-          .select("*")
+          .select(`
+            id, name, price, stock_qty, image_url, description, is_active, category_id,
+            categories ( id, name ),
+            product_images ( id, variant_id, url, sort_order ),
+            product_variants ( id, name, color_hex, stock_qty, is_active, sort_order )
+          `)
           .eq("is_active", true)
           .order("name", { ascending: true });
 
-        if (error) {
-          setErrorMsg(error.message);
+        if (prodErr) {
+          setErrorMsg(prodErr.message);
         } else {
-          setProducts((data as Product[]) || []);
+          const rawList = (prodData as any[]) || [];
+          const list: Product[] = rawList.map((p) => {
+            const catName = Array.isArray(p.categories)
+              ? p.categories[0]?.name
+              : p.categories?.name;
+            return {
+              ...p,
+              categoryName: catName || null,
+            };
+          });
+          setProducts(list);
         }
       } catch (err: unknown) {
         setErrorMsg(err instanceof Error ? err.message : "Failed to load products");
@@ -48,41 +105,40 @@ export default function HomePage() {
       }
     }
 
-    loadProducts();
+    loadCatalog();
   }, []);
 
-  // Compute unique categories from active products
-  const categories = useMemo(() => {
-    const set = new Set<string>();
-    products.forEach((p) => {
-      if (p.category && p.category.trim()) {
-        set.add(p.category.trim());
-      }
-    });
-    return ["All", ...Array.from(set)];
-  }, [products]);
+  // Filter chips come from categories table (active only, ordered by sort_order), plus "All"
+  const categoryPills = useMemo(() => {
+    return ["All", ...categories.map((c) => c.name)];
+  }, [categories]);
 
   // Filter products by category and search term
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
       const matchCategory =
         selectedCategory === "All" ||
-        (p.category && p.category.toLowerCase() === selectedCategory.toLowerCase());
+        (p.categoryName &&
+          p.categoryName.toLowerCase() === selectedCategory.toLowerCase());
+
+      const term = search.toLowerCase();
       const matchSearch =
         !search.trim() ||
-        p.name.toLowerCase().includes(search.toLowerCase()) ||
-        (p.description && p.description.toLowerCase().includes(search.toLowerCase()));
+        p.name.toLowerCase().includes(term) ||
+        (p.description && p.description.toLowerCase().includes(term)) ||
+        (p.categoryName && p.categoryName.toLowerCase().includes(term));
+
       return matchCategory && matchSearch;
     });
   }, [products, selectedCategory, search]);
 
-  const handleAddToCart = (product: Product) => {
+  const handleAddToCart = (product: Product, coverImage: string | null) => {
     add({
-      id: product.id,
+      product_id: product.id,
       name: product.name,
       price: product.price,
       stock_qty: product.stock_qty,
-      image_url: product.image_url,
+      image_url: coverImage || product.image_url,
     });
 
     setAddedId(product.id);
@@ -128,12 +184,12 @@ export default function HomePage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search kibble, treats, toys..."
-              className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-gray-200 focus:border-[#4A5330] focus:ring-2 focus:ring-[#838F58]/20 text-sm outline-none transition"
+              className="w-full pl-9 pr-8 py-2.5 rounded-xl border border-gray-200 focus:border-[#4A5330] focus:ring-2 focus:ring-[#838F58]/20 text-sm outline-none transition min-h-[44px]"
             />
             {search && (
               <button
                 onClick={() => setSearch("")}
-                className="absolute inset-y-0 right-3 flex items-center text-xs text-gray-400 hover:text-gray-600"
+                className="absolute inset-y-0 right-3 flex items-center text-xs text-gray-400 hover:text-gray-600 min-h-[44px] min-w-[30px] justify-center"
               >
                 ✕
               </button>
@@ -141,22 +197,22 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Category Pills */}
-        {categories.length > 1 && (
+        {/* Category Pills (Active categories only, ordered by sort_order, plus 'All') */}
+        {categoryPills.length > 1 && (
           <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1 scrollbar-none">
-            {categories.map((cat) => {
-              const active = selectedCategory === cat;
+            {categoryPills.map((catName) => {
+              const active = selectedCategory.toLowerCase() === catName.toLowerCase();
               return (
                 <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+                  key={catName}
+                  onClick={() => setSelectedCategory(catName)}
+                  className={`min-h-[44px] px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center justify-center ${
                     active
                       ? "bg-[#4A5330] text-white shadow-xs"
                       : "bg-[#F9D1D9]/60 text-[#4A5330] hover:bg-[#F9D1D9]"
                   }`}
                 >
-                  {cat}
+                  {catName}
                 </button>
               );
             })}
@@ -198,7 +254,7 @@ export default function HomePage() {
                 setSearch("");
                 setSelectedCategory("All");
               }}
-              className="mt-4 px-4 py-2 rounded-xl text-xs font-bold bg-[#4A5330] text-white hover:bg-[#4A5330]/90 transition"
+              className="mt-4 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#4A5330] text-white hover:bg-[#4A5330]/90 transition min-h-[44px]"
             >
               Reset Filters
             </button>
@@ -210,8 +266,30 @@ export default function HomePage() {
       {!loading && !errorMsg && filteredProducts.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
           {filteredProducts.map((product) => {
-            const inStock = product.stock_qty > 0;
-            const cartItem = items.find((i) => String(i.id) === String(product.id));
+            // General photos sorted
+            const generalPhotos = (product.product_images || [])
+              .filter((i) => i.variant_id === null)
+              .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+
+            // Cover image: first general photo or product.image_url
+            const coverImage = generalPhotos[0]?.url || product.image_url || null;
+
+            // Active variants sorted
+            const activeVariants = (product.product_variants || [])
+              .filter((v) => v.is_active)
+              .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+
+            const hasOptions = activeVariants.length > 0;
+
+            // Stock calculation
+            const totalStock = hasOptions
+              ? activeVariants.reduce((sum, v) => sum + (Number(v.stock_qty) || 0), 0)
+              : product.stock_qty;
+
+            const inStock = totalStock > 0;
+
+            // Check cart quantity for products without variants
+            const cartItem = items.find((i) => String(i.product_id) === String(product.id) && i.variant_id === null);
             const inCartQty = cartItem?.qty || 0;
             const reachedMax = inCartQty >= product.stock_qty;
             const isJustAdded = addedId === product.id;
@@ -222,17 +300,20 @@ export default function HomePage() {
                 className="bg-white rounded-2xl p-4 shadow-xs border border-[#838F58]/20 flex flex-col justify-between hover:shadow-md transition-shadow group"
               >
                 <div>
-                  {/* Product Image */}
-                  <div className="relative w-full aspect-square bg-[#F9D1D9]/40 rounded-xl overflow-hidden mb-3 flex items-center justify-center">
-                    {product.image_url ? (
+                  {/* Product Image & Link to Product Detail Page */}
+                  <Link
+                    href={`/product/${product.id}`}
+                    className="block relative w-full aspect-square bg-[#F9D1D9]/40 rounded-xl overflow-hidden mb-3"
+                  >
+                    {coverImage ? (
                       <img
-                        src={product.image_url}
+                        src={coverImage}
                         alt={product.name}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
                       />
                     ) : (
-                      <div className="flex flex-col items-center justify-center text-[#838F58]">
+                      <div className="w-full h-full flex flex-col items-center justify-center text-[#838F58]">
                         <span className="text-4xl">🥫</span>
                         <span className="text-[11px] font-medium mt-1 text-[#4A5330]/60">
                           The Pet Pantry
@@ -244,7 +325,7 @@ export default function HomePage() {
                     <div className="absolute top-2 right-2">
                       {inStock ? (
                         <span className="bg-white/90 backdrop-blur-xs text-[#4A5330] text-[11px] font-bold px-2 py-0.5 rounded-full border border-[#838F58]/30 shadow-xs">
-                          In stock ({product.stock_qty})
+                          {hasOptions ? `${activeVariants.length} options` : `In stock (${totalStock})`}
                         </span>
                       ) : (
                         <span className="bg-red-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-xs">
@@ -252,19 +333,52 @@ export default function HomePage() {
                         </span>
                       )}
                     </div>
-                  </div>
+                  </Link>
 
                   {/* Category */}
-                  {product.category && (
+                  {product.categoryName && (
                     <span className="text-[11px] font-bold text-[#838F58] tracking-wider uppercase block mb-1">
-                      {product.category}
+                      {product.categoryName}
                     </span>
                   )}
 
-                  {/* Title */}
-                  <h2 className="font-bold text-base text-[#4A5330] line-clamp-2 leading-snug">
+                  {/* Title linking to detail page */}
+                  <Link
+                    href={`/product/${product.id}`}
+                    className="font-bold text-base text-[#4A5330] line-clamp-2 leading-snug hover:text-[#FF5C93] transition"
+                  >
                     {product.name}
-                  </h2>
+                  </Link>
+
+                  {/* Color dots for options on home card */}
+                  {hasOptions && (
+                    <div className="flex items-center gap-1.5 my-2">
+                      {activeVariants.slice(0, 5).map((v) => (
+                        v.color_hex ? (
+                          <span
+                            key={v.id}
+                            className="w-3.5 h-3.5 rounded-full border border-black/15 shadow-2xs shrink-0"
+                            style={{ backgroundColor: v.color_hex }}
+                            title={v.name}
+                          />
+                        ) : (
+                          <span
+                            key={v.id}
+                            className="w-3.5 h-3.5 rounded-full bg-gray-300 border border-black/10 shrink-0"
+                            title={v.name}
+                          />
+                        )
+                      ))}
+                      {activeVariants.length > 5 && (
+                        <span className="text-[10px] text-gray-400 font-bold">
+                          +{activeVariants.length - 5}
+                        </span>
+                      )}
+                      <span className="text-[11px] text-gray-500 ml-1">
+                        {activeVariants.length} {activeVariants.length === 1 ? "color" : "colors"}
+                      </span>
+                    </div>
+                  )}
 
                   {/* Description */}
                   {product.description && (
@@ -274,7 +388,7 @@ export default function HomePage() {
                   )}
                 </div>
 
-                {/* Price and Add button */}
+                {/* Price and Action Button */}
                 <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between gap-2">
                   <div>
                     <span className="text-xs text-gray-400 block -mb-0.5">Price</span>
@@ -283,33 +397,43 @@ export default function HomePage() {
                     </span>
                   </div>
 
-                  <button
-                    onClick={() => handleAddToCart(product)}
-                    disabled={!inStock || reachedMax}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                      !inStock
-                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                        : reachedMax
-                        ? "bg-amber-100 text-amber-800 cursor-not-allowed"
-                        : isJustAdded
-                        ? "bg-[#838F58] text-white"
-                        : "bg-[#4A5330] hover:bg-[#4A5330]/90 text-white shadow-xs"
-                    }`}
-                  >
-                    {!inStock ? (
-                      "Sold Out"
-                    ) : isJustAdded ? (
-                      "✓ Added!"
-                    ) : reachedMax ? (
-                      "Max in Cart"
-                    ) : (
-                      <>
-                        <span>+</span>
-                        <span>Add to cart</span>
-                        {inCartQty > 0 && ` (${inCartQty})`}
-                      </>
-                    )}
-                  </button>
+                  {/* If product has options, customer must choose a variant on detail page */}
+                  {hasOptions ? (
+                    <Link
+                      href={`/product/${product.id}`}
+                      className="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold bg-[#F9D1D9] text-[#4A5330] hover:bg-[#F9D1D9]/80 transition flex items-center gap-1 shadow-xs"
+                    >
+                      <span>Choose Option →</span>
+                    </Link>
+                  ) : (
+                    <button
+                      onClick={() => handleAddToCart(product, coverImage)}
+                      disabled={!inStock || reachedMax}
+                      className={`min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                        !inStock
+                          ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                          : reachedMax
+                          ? "bg-amber-100 text-amber-800 cursor-not-allowed"
+                          : isJustAdded
+                          ? "bg-[#838F58] text-white"
+                          : "bg-[#4A5330] hover:bg-[#4A5330]/90 text-white shadow-xs"
+                      }`}
+                    >
+                      {!inStock ? (
+                        "Sold Out"
+                      ) : isJustAdded ? (
+                        "✓ Added!"
+                      ) : reachedMax ? (
+                        "Max in Cart"
+                      ) : (
+                        <>
+                          <span>+</span>
+                          <span>Add to cart</span>
+                          {inCartQty > 0 && ` (${inCartQty})`}
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             );

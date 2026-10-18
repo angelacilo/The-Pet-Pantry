@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import "./globals.css";
 import { CartProvider } from "@/lib/cart";
@@ -8,6 +8,12 @@ export const metadata: Metadata = {
   title: "The Pet Pantry - Local Pet Shop",
   description:
     "Order quality pet food, treats, toys, and essentials online from The Pet Pantry with fast delivery and easy store pickup.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#F9D1D9",
 };
 
 export default function RootLayout({
@@ -25,7 +31,7 @@ export default function RootLayout({
           </div>
           <footer className="mt-auto py-6 border-t border-[#838F58]/20 text-center text-xs text-[#4A5330]/70">
             <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-              <span>© 2026 The Pet Pantry. Fresh pet food & accessories.</span>
+              <span>© 2026 The Pet Pantry. Fresh pet food &amp; accessories.</span>
               <Link
                 href="/staff/login"
                 className="text-[11px] text-[#4A5330]/50 hover:text-[#4A5330] transition underline"
